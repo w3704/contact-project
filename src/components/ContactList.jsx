@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { saveAs } from 'file-saver';
 import {
     DndContext,
@@ -17,56 +17,57 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useContacts } from '../context/ContactContext';
 
-/* ─── Smart Color Picker Popover ─── */
-function ColorPickerPopover({ value, onChange, onClose }) {
-    const popoverRef = useRef(null);
-    const triggerRect = useRef(null);
+const PRESET_COLORS = [
+    { color: '#FF0000', label: '紅', cls: 'preset-red' },
+    { color: '#0000FF', label: '藍', cls: 'preset-blue' },
+    { color: '#FFD700', label: '黃', cls: 'preset-yellow' },
+];
 
-    // Position the popover so it doesn't go off-screen
-    const [pos, setPos] = useState({ top: 0, left: 0 });
-
-    const handleSetPosition = useCallback((rect) => {
-        triggerRect.current = rect;
-        const popW = 72;
-        const popH = 60;
-        let left = rect.left + rect.width / 2 - popW / 2;
-        let top = rect.bottom + 4;
-
-        // Prevent right edge clipping
-        if (left + popW > window.innerWidth - 8) {
-            left = window.innerWidth - popW - 8;
-        }
-        // Prevent left edge clipping
-        if (left < 8) left = 8;
-        // Prevent bottom edge clipping
-        if (top + popH > window.innerHeight - 8) {
-            top = rect.top - popH - 4;
-        }
-        setPos({ top, left });
-    }, []);
+/* ─── Color Picker with Presets ─── */
+function ColorPickerWithPresets({ value, defaultValue, onChange, onClose }) {
+    const [showCustom, setShowCustom] = useState(false);
 
     return (
         <>
             <div className="color-picker-backdrop" onClick={onClose} />
-            <div
-                className="color-picker-popover"
-                ref={(el) => {
-                    popoverRef.current = el;
-                }}
-                style={{ top: pos.top, left: pos.left }}
-            >
-                <input
-                    type="color"
-                    value={value}
-                    onChange={onChange}
-                    autoFocus
-                />
+            <div className="color-picker-preset-popover" onClick={e => e.stopPropagation()}>
+                <div className="preset-row">
+                    {PRESET_COLORS.map(p => (
+                        <button
+                            key={p.color}
+                            className={`preset-btn ${p.cls}`}
+                            style={{ background: p.color }}
+                            onClick={() => { onChange(p.color); onClose(); }}
+                            title={p.label}
+                        />
+                    ))}
+                    <button
+                        className="preset-btn preset-custom"
+                        onClick={() => setShowCustom(v => !v)}
+                        title="自訂顏色"
+                    >🎨</button>
+                    <button
+                        className="preset-btn preset-clear"
+                        onClick={() => { onChange(''); onClose(); }}
+                        title="清除"
+                    >✕</button>
+                </div>
+                {showCustom && (
+                    <input
+                        type="color"
+                        className="preset-color-input"
+                        value={value || defaultValue}
+                        onChange={e => { onChange(e.target.value); onClose(); }}
+                        autoFocus
+                    />
+                )}
             </div>
         </>
     );
 }
 
-function ColorSwatchButton({ value, defaultValue, onChange, dashed, title }) {
+/* ─── Column Color Button (for toolbar) ─── */
+function ColumnColorButton({ label, value, onChange }) {
     const [open, setOpen] = useState(false);
     const btnRef = useRef(null);
     const [popoverPos, setPopoverPos] = useState(null);
@@ -74,18 +75,10 @@ function ColorSwatchButton({ value, defaultValue, onChange, dashed, title }) {
     const handleOpen = useCallback(() => {
         if (btnRef.current) {
             const rect = btnRef.current.getBoundingClientRect();
-            const popW = 72;
-            const popH = 60;
-            let left = rect.left + rect.width / 2 - popW / 2;
+            let left = rect.left;
             let top = rect.bottom + 4;
-
-            if (left + popW > window.innerWidth - 8) {
-                left = window.innerWidth - popW - 8;
-            }
+            if (left + 180 > window.innerWidth - 8) left = window.innerWidth - 188;
             if (left < 8) left = 8;
-            if (top + popH > window.innerHeight - 8) {
-                top = rect.top - popH - 4;
-            }
             setPopoverPos({ top, left });
         }
         setOpen(true);
@@ -93,34 +86,26 @@ function ColorSwatchButton({ value, defaultValue, onChange, dashed, title }) {
 
     return (
         <>
-            <span
-                ref={btnRef}
-                className={`color-swatch ${dashed ? 'color-swatch-text' : ''}`}
-                style={{ background: value || defaultValue }}
-                onClick={handleOpen}
-                title={title}
-            />
+            <button ref={btnRef} className="col-color-btn" onClick={handleOpen} title={`${label}文字顏色`}>
+                <span className="col-color-swatch" style={{ background: value || '#94a3b8' }} />
+                <span className="col-color-label">{label}</span>
+            </button>
             {open && popoverPos && (
-                <>
-                    <div className="color-picker-backdrop" onClick={() => setOpen(false)} />
-                    <div
-                        className="color-picker-popover"
-                        style={{ top: popoverPos.top, left: popoverPos.left }}
-                    >
-                        <input
-                            type="color"
-                            value={value || defaultValue}
-                            onChange={onChange}
-                            autoFocus
-                        />
-                    </div>
-                </>
+                <div style={{ position: 'fixed', top: popoverPos.top, left: popoverPos.left, zIndex: 9999 }}>
+                    <ColorPickerWithPresets
+                        value={value}
+                        defaultValue="#1e293b"
+                        onChange={val => { onChange(val); }}
+                        onClose={() => setOpen(false)}
+                    />
+                </div>
             )}
         </>
     );
 }
 
-function SortableEditRow({ contact }) {
+/* ─── Sortable row (no per-row color columns) ─── */
+function SortableEditRow({ contact, selected, onToggle }) {
     const { updateContact, removeContact } = useContacts();
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: contact.id });
 
@@ -130,8 +115,16 @@ function SortableEditRow({ contact }) {
         opacity: isDragging ? 0.3 : 1,
     };
 
+    // Show row background/text color if set
+    const rowStyle = {};
+    if (contact.bgColor) rowStyle.backgroundColor = contact.bgColor;
+    if (contact.textColor) rowStyle.color = contact.textColor;
+
     return (
-        <tr ref={setNodeRef} style={style} className={`edit-row ${isDragging ? 'dragging' : ''}`}>
+        <tr ref={setNodeRef} style={{ ...style, ...rowStyle }} className={`edit-row ${isDragging ? 'dragging' : ''} ${selected ? 'row-selected' : ''}`}>
+            <td className="check-cell">
+                <input type="checkbox" checked={selected} onChange={() => onToggle(contact.id)} />
+            </td>
             <td className="drag-cell">
                 <span {...attributes} {...listeners} className="drag-handle">
                     <svg width="12" height="18" viewBox="0 0 12 18" fill="currentColor">
@@ -139,6 +132,16 @@ function SortableEditRow({ contact }) {
                         <circle cx="9" cy="3" r="1.5" /><circle cx="9" cy="9" r="1.5" /><circle cx="9" cy="15" r="1.5" />
                     </svg>
                 </span>
+            </td>
+            <td className="order-cell">
+                <input
+                    className="cell-input order-input"
+                    type="number"
+                    step="0.01"
+                    value={contact.sortOrder ?? ''}
+                    onChange={e => updateContact(contact.id, 'sortOrder', parseFloat(e.target.value) || 0)}
+                    title="排序編號"
+                />
             </td>
             {[['unit', '單位'], ['extension', '分機'], ['name', '姓名']].map(([field, placeholder]) => (
                 <td key={field} className="edit-cell">
@@ -150,42 +153,6 @@ function SortableEditRow({ contact }) {
                     />
                 </td>
             ))}
-
-            {/* Background color picker */}
-            <td className="color-cell" title="背景色">
-                <ColorSwatchButton
-                    value={contact.bgColor}
-                    defaultValue="#ffffff"
-                    onChange={e => updateContact(contact.id, 'bgColor', e.target.value)}
-                    title="選擇背景色"
-                />
-            </td>
-
-            {/* Text color picker */}
-            <td className="color-cell" title="字體色">
-                <ColorSwatchButton
-                    value={contact.textColor}
-                    defaultValue="#1e293b"
-                    onChange={e => updateContact(contact.id, 'textColor', e.target.value)}
-                    dashed
-                    title="選擇字體色"
-                />
-            </td>
-
-            {/* Clear colors button */}
-            <td className="color-cell" title="清除顏色">
-                {(contact.bgColor || contact.textColor) && (
-                    <button
-                        className="btn-icon btn-clear-color"
-                        onClick={() => {
-                            updateContact(contact.id, 'bgColor', '');
-                            updateContact(contact.id, 'textColor', '');
-                        }}
-                        title="清除顏色設定"
-                    >✕</button>
-                )}
-            </td>
-
             <td className="action-cell">
                 <button
                     className="btn-icon btn-delete"
@@ -205,11 +172,18 @@ function SortableEditRow({ contact }) {
 }
 
 /* ─── Static row (used when sorting is active, no DnD) ─── */
-function StaticEditRow({ contact }) {
+function StaticEditRow({ contact, selected, onToggle }) {
     const { updateContact, removeContact } = useContacts();
 
+    const rowStyle = {};
+    if (contact.bgColor) rowStyle.backgroundColor = contact.bgColor;
+    if (contact.textColor) rowStyle.color = contact.textColor;
+
     return (
-        <tr className="edit-row">
+        <tr className={`edit-row ${selected ? 'row-selected' : ''}`} style={rowStyle}>
+            <td className="check-cell">
+                <input type="checkbox" checked={selected} onChange={() => onToggle(contact.id)} />
+            </td>
             <td className="drag-cell">
                 <span className="drag-handle drag-handle-disabled">
                     <svg width="12" height="18" viewBox="0 0 12 18" fill="currentColor">
@@ -217,6 +191,16 @@ function StaticEditRow({ contact }) {
                         <circle cx="9" cy="3" r="1.5" /><circle cx="9" cy="9" r="1.5" /><circle cx="9" cy="15" r="1.5" />
                     </svg>
                 </span>
+            </td>
+            <td className="order-cell">
+                <input
+                    className="cell-input order-input"
+                    type="number"
+                    step="0.01"
+                    value={contact.sortOrder ?? ''}
+                    onChange={e => updateContact(contact.id, 'sortOrder', parseFloat(e.target.value) || 0)}
+                    title="排序編號"
+                />
             </td>
             {[['unit', '單位'], ['extension', '分機'], ['name', '姓名']].map(([field, placeholder]) => (
                 <td key={field} className="edit-cell">
@@ -228,36 +212,6 @@ function StaticEditRow({ contact }) {
                     />
                 </td>
             ))}
-
-            <td className="color-cell" title="背景色">
-                <ColorSwatchButton
-                    value={contact.bgColor}
-                    defaultValue="#ffffff"
-                    onChange={e => updateContact(contact.id, 'bgColor', e.target.value)}
-                    title="選擇背景色"
-                />
-            </td>
-            <td className="color-cell" title="字體色">
-                <ColorSwatchButton
-                    value={contact.textColor}
-                    defaultValue="#1e293b"
-                    onChange={e => updateContact(contact.id, 'textColor', e.target.value)}
-                    dashed
-                    title="選擇字體色"
-                />
-            </td>
-            <td className="color-cell" title="清除顏色">
-                {(contact.bgColor || contact.textColor) && (
-                    <button
-                        className="btn-icon btn-clear-color"
-                        onClick={() => {
-                            updateContact(contact.id, 'bgColor', '');
-                            updateContact(contact.id, 'textColor', '');
-                        }}
-                        title="清除顏色設定"
-                    >✕</button>
-                )}
-            </td>
             <td className="action-cell">
                 <button
                     className="btn-icon btn-delete"
@@ -282,15 +236,144 @@ function SortArrow({ field, sortField, sortDir }) {
     return <span className="sort-arrow">{sortDir === 'asc' ? '↑' : '↓'}</span>;
 }
 
+/* ─── Add Contact Modal ─── */
+function AddContactModal({ contacts, onConfirm, onCancel }) {
+    const maxOrder = contacts.length > 0
+        ? contacts.reduce((max, c) => Math.max(max, c.sortOrder || 0), 0)
+        : 0;
+    const defaultOrder = Math.ceil(maxOrder) + 1;
+    const [value, setValue] = useState(defaultOrder.toFixed(2));
+    const inputRef = useRef(null);
+
+    useEffect(() => {
+        if (inputRef.current) {
+            inputRef.current.focus();
+            inputRef.current.select();
+        }
+    }, []);
+
+    const handleConfirm = () => {
+        const so = parseFloat(value);
+        if (isNaN(so)) {
+            alert('請輸入有效的數字');
+            return;
+        }
+        onConfirm(parseFloat(so.toFixed(2)));
+    };
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter') handleConfirm();
+        if (e.key === 'Escape') onCancel();
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onCancel}>
+            <div className="modal-content" onClick={e => e.stopPropagation()}>
+                <h3 className="modal-title">📌 新增聯絡人</h3>
+                <p className="modal-desc">
+                    請輸入排序編號（支援小數兩位）<br />
+                    目前最大編號：<strong>{maxOrder.toFixed(2)}</strong>
+                </p>
+                <input
+                    ref={inputRef}
+                    type="number"
+                    step="0.01"
+                    className="modal-input"
+                    value={value}
+                    onChange={e => setValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={`例如 ${defaultOrder} 或 ${(defaultOrder - 0.5).toFixed(2)}`}
+                />
+                <div className="modal-actions">
+                    <button className="btn modal-cancel" onClick={onCancel}>取消</button>
+                    <button className="btn btn-add modal-confirm" onClick={handleConfirm}>確定新增</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+/* ─── Batch Edit Bar ─── */
+function BatchEditBar({ selectedIds, onClear }) {
+    const { batchUpdateContacts, batchAdjustFontSize, batchResetFontSize } = useContacts();
+    const count = selectedIds.length;
+
+    const applyBg = (color) => batchUpdateContacts(selectedIds, { bgColor: color });
+    const applyText = (color) => batchUpdateContacts(selectedIds, { textColor: color });
+    const clearColors = () => batchUpdateContacts(selectedIds, { bgColor: '', textColor: '' });
+
+    return (
+        <div className="batch-bar">
+            <span className="batch-count">已選 {count} 筆</span>
+
+            {/* Color section */}
+            <div className="batch-section">
+                <div className="batch-group">
+                    <span className="batch-label">背景色：</span>
+                    {PRESET_COLORS.map(p => (
+                        <button key={p.color} className={`preset-btn ${p.cls}`} style={{ background: p.color }}
+                            onClick={() => applyBg(p.color)} title={p.label} />
+                    ))}
+                    <BatchCustomColorBtn onChange={applyBg} />
+                </div>
+                <div className="batch-group">
+                    <span className="batch-label">字體色：</span>
+                    {PRESET_COLORS.map(p => (
+                        <button key={p.color} className={`preset-btn ${p.cls}`} style={{ background: p.color }}
+                            onClick={() => applyText(p.color)} title={p.label} />
+                    ))}
+                    <BatchCustomColorBtn onChange={applyText} />
+                </div>
+                <button className="btn batch-clear-btn" onClick={clearColors} title="清除所選顏色">🧹 清除顏色</button>
+            </div>
+
+            {/* Font size section */}
+            <div className="batch-section batch-fs-section">
+                <span className="batch-label">字體大小：</span>
+                {[['cellUnitFS', '單位'], ['cellExtFS', '分機'], ['cellNameFS', '姓名']].map(([field, label]) => (
+                    <div key={field} className="batch-fs-group">
+                        <span className="batch-fs-label">{label}</span>
+                        <button className="fs-btn" onClick={() => batchAdjustFontSize(selectedIds, field, -0.5)} title={`${label}縮小`}>−</button>
+                        <button className="fs-btn" onClick={() => batchAdjustFontSize(selectedIds, field, 0.5)} title={`${label}放大`}>+</button>
+                        <button className="fs-btn batch-fs-reset" onClick={() => batchResetFontSize(selectedIds, field)} title={`${label}重設`}>↺</button>
+                    </div>
+                ))}
+            </div>
+
+            <button className="btn batch-deselect-btn" onClick={onClear} title="取消選取">取消選取</button>
+        </div>
+    );
+}
+
+function BatchCustomColorBtn({ onChange }) {
+    const [show, setShow] = useState(false);
+    return (
+        <span style={{ position: 'relative', display: 'inline-flex' }}>
+            <button className="preset-btn preset-custom" onClick={() => setShow(v => !v)} title="自訂顏色">🎨</button>
+            {show && (
+                <>
+                    <div className="color-picker-backdrop" onClick={() => setShow(false)} />
+                    <div className="batch-custom-picker">
+                        <input type="color" autoFocus onChange={e => { onChange(e.target.value); setShow(false); }} />
+                    </div>
+                </>
+            )}
+        </span>
+    );
+}
+
+/* ─── Main ContactList ─── */
 export default function ContactList() {
     const {
         contacts, addContact, reorderContacts, displayContacts, clearContacts,
         sortField, setSortField, sortDir, setSortDir,
         searchTerm, setSearchTerm,
-        unitFontSize, setUnitFontSize, nameFontSize, setNameFontSize,
+        columnColors, setColumnColors,
         exportToJson, importFromJson,
     } = useContacts();
     const [activeId, setActiveId] = useState(null);
+    const [showAddModal, setShowAddModal] = useState(false);
+    const [selectedIds, setSelectedIds] = useState(new Set());
     const jsonInputRef = useRef(null);
 
     const isFiltering = searchTerm.trim() !== '' || sortField !== null;
@@ -305,7 +388,6 @@ export default function ContactList() {
         setActiveId(null);
         if (!over || active.id === over.id) return;
 
-        // When sorting/filtering is active, "bake" the displayed order into contacts
         const baseList = isFiltering ? [...displayContacts] : [...contacts];
         const oldIndex = baseList.findIndex(c => c.id === active.id);
         const newIndex = baseList.findIndex(c => c.id === over.id);
@@ -313,13 +395,11 @@ export default function ContactList() {
 
         const newOrder = arrayMove(baseList, oldIndex, newIndex);
 
-        // Clear sort FIRST, then apply the new order
         if (sortField) {
             setSortField(null);
             setSortDir('asc');
         }
         if (searchTerm.trim()) {
-            // Search is active — reorder only within visible items
             const visibleIds = new Set(displayContacts.map(c => c.id));
             const hidden = contacts.filter(c => !visibleIds.has(c.id));
             reorderContacts([...newOrder, ...hidden]);
@@ -330,7 +410,6 @@ export default function ContactList() {
 
     const activeContact = contacts.find(c => c.id === activeId);
 
-    // Toggle sort
     const handleSortClick = useCallback((field) => {
         setSortField(prev => {
             if (prev === field) {
@@ -346,6 +425,28 @@ export default function ContactList() {
         });
     }, [setSortField, setSortDir]);
 
+    // Checkbox helpers
+    const toggleSelect = useCallback((id) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
+
+    const allSelected = displayContacts.length > 0 && displayContacts.every(c => selectedIds.has(c.id));
+    const toggleSelectAll = useCallback(() => {
+        if (allSelected) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(displayContacts.map(c => c.id)));
+        }
+    }, [allSelected, displayContacts]);
+
+    const selectedArray = Array.from(selectedIds);
+
+
     return (
         <div className="contact-list-panel">
             <div className="list-toolbar">
@@ -353,36 +454,7 @@ export default function ContactList() {
                     {searchTerm.trim() ? `${displayContacts.length} / ${contacts.length}` : `${contacts.length}`} 筆聯絡人
                 </span>
                 <div className="toolbar-right">
-                    {/* Font size controls for preview */}
-                    <div className="font-size-controls">
-                        <span className="fs-label">單位</span>
-                        <button
-                            className="fs-btn"
-                            onClick={() => setUnitFontSize(s => Math.max(3, +(s - 0.5).toFixed(1)))}
-                            title="單位字體縮小"
-                        >−</button>
-                        <span className="fs-value">{unitFontSize}pt</span>
-                        <button
-                            className="fs-btn"
-                            onClick={() => setUnitFontSize(s => Math.min(10, +(s + 0.5).toFixed(1)))}
-                            title="單位字體放大"
-                        >+</button>
-                    </div>
-                    <div className="font-size-controls">
-                        <span className="fs-label">姓名</span>
-                        <button
-                            className="fs-btn"
-                            onClick={() => setNameFontSize(s => Math.max(3, +(s - 0.5).toFixed(1)))}
-                            title="姓名字體縮小"
-                        >−</button>
-                        <span className="fs-value">{nameFontSize}pt</span>
-                        <button
-                            className="fs-btn"
-                            onClick={() => setNameFontSize(s => Math.min(10, +(s + 0.5).toFixed(1)))}
-                            title="姓名字體放大"
-                        >+</button>
-                    </div>
-                    <button className="btn btn-add" onClick={addContact}>
+                    <button className="btn btn-add" onClick={() => setShowAddModal(true)}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
                         </svg>
@@ -432,6 +504,22 @@ export default function ContactList() {
                 </div>
             </div>
 
+            {/* Column color controls */}
+            <div className="column-color-bar">
+                <span className="col-color-title">欄位文字顏色：</span>
+                <ColumnColorButton label="單位" value={columnColors.unit}
+                    onChange={v => setColumnColors(prev => ({ ...prev, unit: v }))} />
+                <ColumnColorButton label="分機" value={columnColors.extension}
+                    onChange={v => setColumnColors(prev => ({ ...prev, extension: v }))} />
+                <ColumnColorButton label="姓名" value={columnColors.name}
+                    onChange={v => setColumnColors(prev => ({ ...prev, name: v }))} />
+            </div>
+
+            {/* Batch edit bar */}
+            {selectedArray.length > 0 && (
+                <BatchEditBar selectedIds={selectedArray} onClear={() => setSelectedIds(new Set())} />
+            )}
+
             {/* Search bar */}
             <div className="search-bar">
                 <svg className="search-bar-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -455,7 +543,13 @@ export default function ContactList() {
                     <table className="edit-table">
                         <thead>
                             <tr>
+                                <th className="check-col">
+                                    <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} title="全選" />
+                                </th>
                                 <th className="drag-col"></th>
+                                <th className="order-col sort-header" onClick={() => handleSortClick('sortOrder')}>
+                                    # <SortArrow field="sortOrder" sortField={sortField} sortDir={sortDir} />
+                                </th>
                                 <th className="sort-header" onClick={() => handleSortClick('unit')}>
                                     單位 <SortArrow field="unit" sortField={sortField} sortDir={sortDir} />
                                 </th>
@@ -465,20 +559,22 @@ export default function ContactList() {
                                 <th className="sort-header" onClick={() => handleSortClick('name')}>
                                     姓名 <SortArrow field="name" sortField={sortField} sortDir={sortDir} />
                                 </th>
-                                <th title="背景色">🎨</th>
-                                <th title="字體色">🖋</th>
-                                <th></th>
                                 <th></th>
                             </tr>
                         </thead>
                         <SortableContext items={displayContacts.map(c => c.id)} strategy={verticalListSortingStrategy}>
                             <tbody>
                                 {displayContacts.map(contact => (
-                                    <SortableEditRow key={contact.id} contact={contact} />
+                                    <SortableEditRow
+                                        key={contact.id}
+                                        contact={contact}
+                                        selected={selectedIds.has(contact.id)}
+                                        onToggle={toggleSelect}
+                                    />
                                 ))}
                                 {displayContacts.length === 0 && (
                                     <tr>
-                                        <td colSpan={8} className="empty-hint">
+                                        <td colSpan={7} className="empty-hint">
                                             {searchTerm.trim() ? '找不到符合的聯絡人' : '尚無聯絡人，請從下方匯入 CSV'}
                                         </td>
                                     </tr>
@@ -495,7 +591,7 @@ export default function ContactList() {
                                         <td className="edit-cell"><input className="cell-input" value={activeContact.unit} readOnly /></td>
                                         <td className="edit-cell"><input className="cell-input" value={activeContact.extension} readOnly /></td>
                                         <td className="edit-cell"><input className="cell-input" value={activeContact.name} readOnly /></td>
-                                        <td colSpan={4}></td>
+                                        <td colSpan={3}></td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -503,6 +599,13 @@ export default function ContactList() {
                     </DragOverlay>
                 </DndContext>
             </div>
+
+            {/* Add Contact Modal */}
+            {showAddModal && <AddContactModal
+                contacts={contacts}
+                onConfirm={(so) => { addContact(so); setShowAddModal(false); }}
+                onCancel={() => setShowAddModal(false)}
+            />}
         </div>
     );
 }

@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import ContactTable from './ContactTable';
 import { useContacts } from '../context/ContactContext';
 import { saveAs } from 'file-saver';
@@ -34,7 +34,7 @@ export default function LeftPanel() {
     const [manualZoom, setManualZoom] = useState(null);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const timestamp = useRocTimestamp();
-    const { displayContacts } = useContacts();
+    const { displayContacts, unitFontSize, nameFontSize, unitColors, pageTitle, pageSubtitle } = useContacts();
 
     const [titleFontSize, setTitleFontSize] = useState(24);
     const [subtitleFontSize, setSubtitleFontSize] = useState(7.5);
@@ -45,6 +45,10 @@ export default function LeftPanel() {
     const MAGNIFIER_SIZE = 220;
     const MAGNIFIER_ZOOM = 3;
     const LENS_OFFSET = 130; // offset lens away from cursor so glow is visible
+
+    // Drag-to-pan state
+    const [isPanning, setIsPanning] = useState(false);
+    const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
     const scale = manualZoom !== null ? manualZoom : autoScale;
 
@@ -120,6 +124,51 @@ export default function LeftPanel() {
 
     const zoomPercent = Math.round(scale * 100);
 
+    // Drag-to-pan handlers
+    const handlePanStart = useCallback((e) => {
+        if (magnifierOn) return; // don't pan when magnifier is on
+        if (e.button !== 0) return; // only left-click
+        // Don't pan if clicking on interactive elements
+        if (e.target.closest('button, input, a, select')) return;
+        setIsPanning(true);
+        panStart.current = {
+            x: e.clientX,
+            y: e.clientY,
+            scrollLeft: scrollRef.current?.scrollLeft || 0,
+            scrollTop: scrollRef.current?.scrollTop || 0,
+        };
+        e.preventDefault();
+    }, [magnifierOn]);
+
+    const handlePanMove = useCallback((e) => {
+        if (!isPanning) {
+            // Pass through to magnifier if active
+            if (magnifierOn && pageRef.current) {
+                const rect = pageRef.current.getBoundingClientRect();
+                setMagPos({ clientX: e.clientX, clientY: e.clientY, rect });
+            }
+            return;
+        }
+        const dx = e.clientX - panStart.current.x;
+        const dy = e.clientY - panStart.current.y;
+        if (scrollRef.current) {
+            scrollRef.current.scrollLeft = panStart.current.scrollLeft - dx;
+            scrollRef.current.scrollTop = panStart.current.scrollTop - dy;
+        }
+    }, [isPanning, magnifierOn]);
+
+    const handlePanEnd = useCallback(() => {
+        if (isPanning) setIsPanning(false);
+    }, [isPanning]);
+
+    // Add global mouseup listener for pan end
+    useEffect(() => {
+        if (isPanning) {
+            const onUp = () => setIsPanning(false);
+            window.addEventListener('mouseup', onUp);
+            return () => window.removeEventListener('mouseup', onUp);
+        }
+    }, [isPanning]);
     // Compute magnifier lens positioning — offset to bottom-right of cursor
     let lensStyle = null;
     let innerStyle = null;
@@ -238,19 +287,24 @@ export default function LeftPanel() {
             </div>
 
             <div
-                className={`a4-scroll-area ${isFullscreen ? 'fullscreen-mode' : ''} ${magnifierOn ? 'magnifier-cursor' : ''}`}
+                className={`a4-scroll-area ${isFullscreen ? 'fullscreen-mode' : ''} ${magnifierOn ? 'magnifier-cursor' : ''} ${isPanning ? 'panning' : 'pannable'}`}
                 ref={scrollRef}
-                onMouseMove={handleMagMove}
-                onMouseLeave={handleMagLeave}
+                onMouseDown={handlePanStart}
+                onMouseMove={handlePanMove}
+                onMouseUp={handlePanEnd}
+                onMouseLeave={(e) => {
+                    handlePanEnd();
+                    if (magnifierOn) setMagPos(null);
+                }}
             >
                 <div className="a4-wrapper" ref={pageRef} style={{ '--a4-scale': scale }}>
                     <div className="a4-page a3-landscape">
                         <div className="a4-header">
                             <h1 className="a4-title" style={{ fontSize: `${titleFontSize}pt` }}>
-                                金門縣政府網路電話一覽表(府內)
+                                {pageTitle}
                             </h1>
                             <p className="a4-info-line" style={{ fontSize: `${subtitleFontSize}pt` }}>
-                                縣民服務專線：１９９９（外縣市：0800-318823）　總機：082-318823、0978-253-902　中華電信服務專線：325005 陳小姐 ／ 315056 李先生 ／ 313018 許先生 ／ 客服專線：0800-080-123　{timestamp}
+                                {pageSubtitle}　{timestamp}
                             </p>
                         </div>
                         <ContactTable />
@@ -271,10 +325,10 @@ export default function LeftPanel() {
                                 <div className="a4-page a3-landscape">
                                     <div className="a4-header">
                                         <h1 className="a4-title" style={{ fontSize: `${titleFontSize}pt` }}>
-                                            金門縣政府網路電話一覽表(府內)
+                                            {pageTitle}
                                         </h1>
                                         <p className="a4-info-line" style={{ fontSize: `${subtitleFontSize}pt` }}>
-                                            縣民服務專線：１９９９（外縣市：0800-318823）　總機：082-318823、0978-253-902　中華電信服務專線：325005 陳小姐 ／ 315056 李先生 ／ 313018 許先生 ／ 客服專線：0800-080-123　{timestamp}
+                                            {pageSubtitle}　{timestamp}
                                         </p>
                                     </div>
                                     <ContactTable />
